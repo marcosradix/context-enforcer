@@ -11,7 +11,7 @@
 
     <name>ContextEnforcer Spring Boot Starter</name>
     <description>Context enforcement, guardrails, and security framework for Spring AI</description>
-    <url>https://github.com/marcosradix/context-enforcer</url>
+    <url>https://github.com/1Tonelada/context-enforcer</url>
 
     <licenses>
         <license>

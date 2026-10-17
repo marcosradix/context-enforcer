@@ -1,6 +1,6 @@
 # ContextEnforcer — Spring AI Guardrails & Context Enforcement Framework
 
-[![CI](https://github.com/marcosradix/context-enforcer/actions/workflows/ci.yml/badge.svg)](https://github.com/marcosradix/context-enforcer/actions/workflows/ci.yml)
+[![CI](https://github.com/1Tonelada/context-enforcer/actions/workflows/ci.yml/badge.svg)](https://github.com/1Tonelada/context-enforcer/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Spring Boot](https://img.shields.io/badge/Spring_Boot-3.4+-brightgreen.svg)](https://spring.io/projects/spring-boot)
 [![Spring AI](https://img.shields.io/badge/Spring_AI-1.0+-blue.svg)](https://spring.io/projects/spring-ai)
