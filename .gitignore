@@ -1,0 +1,23 @@
+target/
+!.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+### IDE ###
+.idea/
+*.iws
+*.iml
+*.ipr
+.vscode/
+*.swp
+*.DS_Store
+
+### Build & Logs ###
+*.log
+*.dump
+*.dumpstream
+
+### Local scratch files ###
+after-all.txt
+test.txt
+*.pdf
