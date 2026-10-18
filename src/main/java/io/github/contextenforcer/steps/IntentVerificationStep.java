@@ -2,7 +2,7 @@ package io.github.contextenforcer.steps;
 
 import io.github.contextenforcer.core.EnforcementStep;
 import io.github.contextenforcer.core.StepResult;
-import org.springframework.ai.chat.client.advisor.api.AdvisedRequest;
+import org.springframework.ai.chat.client.ChatClientRequest;
 
 import java.util.Map;
 
@@ -44,14 +44,14 @@ public class IntentVerificationStep implements EnforcementStep {
     }
 
     @Override
-    public StepResult execute(AdvisedRequest request) {
+    public StepResult execute(ChatClientRequest request) {
         if (verifierStrategy == null) {
             return new StepResult.Proceed(request);
         }
 
         boolean allowed = verifierStrategy.isWithinAllowedContext(
-                request.userText(),
-                request.adviseContext()
+                EnforcementStep.userText(request),
+                request.context()
         );
 
         if (!allowed) {

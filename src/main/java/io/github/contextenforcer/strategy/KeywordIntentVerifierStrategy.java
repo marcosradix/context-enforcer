@@ -3,11 +3,14 @@ package io.github.contextenforcer.strategy;
 import io.github.contextenforcer.steps.IntentVerificationStep.IntentVerifierStrategy;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * Heuristic keyword-based intent verification strategy.
  * Useful for lightweight environments without embedding models or as a rapid filter.
+ * Matching is case-insensitive and independent of the JVM default locale; null or blank keywords are ignored.
  */
 public class KeywordIntentVerifierStrategy implements IntentVerifierStrategy {
 
@@ -15,8 +18,8 @@ public class KeywordIntentVerifierStrategy implements IntentVerifierStrategy {
     private final List<String> blockedKeywords;
 
     public KeywordIntentVerifierStrategy(List<String> allowedKeywords, List<String> blockedKeywords) {
-        this.allowedKeywords = allowedKeywords != null ? allowedKeywords : List.of();
-        this.blockedKeywords = blockedKeywords != null ? blockedKeywords : List.of();
+        this.allowedKeywords = normalize(allowedKeywords);
+        this.blockedKeywords = normalize(blockedKeywords);
     }
 
     @Override
@@ -25,27 +28,25 @@ public class KeywordIntentVerifierStrategy implements IntentVerifierStrategy {
             return false;
         }
 
-        String lowerPrompt = userPrompt.toLowerCase();
+        String lowerPrompt = userPrompt.toLowerCase(Locale.ROOT);
 
         // Check blocked keywords first
-        for (String blocked : blockedKeywords) {
-            if (lowerPrompt.contains(blocked.toLowerCase())) {
-                return false;
-            }
+        if (blockedKeywords.stream().anyMatch(lowerPrompt::contains)) {
+            return false;
         }
 
         // If allowed keywords list is specified, at least one must match
-        if (!allowedKeywords.isEmpty()) {
-            boolean matched = false;
-            for (String allowed : allowedKeywords) {
-                if (lowerPrompt.contains(allowed.toLowerCase())) {
-                    matched = true;
-                    break;
-                }
-            }
-            return matched;
-        }
+        return allowedKeywords.isEmpty() || allowedKeywords.stream().anyMatch(lowerPrompt::contains);
+    }
 
-        return true;
+    private static List<String> normalize(List<String> keywords) {
+        if (keywords == null) {
+            return List.of();
+        }
+        return keywords.stream()
+                .filter(Objects::nonNull)
+                .filter(k -> !k.isBlank())
+                .map(k -> k.toLowerCase(Locale.ROOT))
+                .toList();
     }
 }

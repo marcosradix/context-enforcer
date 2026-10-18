@@ -6,7 +6,7 @@ import io.github.contextenforcer.core.StepResult;
 import io.github.contextenforcer.test.TestUtils;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.ai.chat.client.advisor.api.AdvisedRequest;
+import org.springframework.ai.chat.client.ChatClientRequest;
 
 import java.util.List;
 
@@ -28,7 +28,7 @@ class SchemaValidationStepTest {
         SchemaValidationStep step = new SchemaValidationStep(properties);
 
         String longPrompt = "A".repeat(51);
-        AdvisedRequest request = TestUtils.createRequest(longPrompt);
+        ChatClientRequest request = TestUtils.createRequest(longPrompt);
 
         StepResult result = step.execute(request);
 
@@ -52,7 +52,7 @@ class SchemaValidationStepTest {
         );
         SchemaValidationStep step = new SchemaValidationStep(properties);
 
-        AdvisedRequest request = TestUtils.createRequest("Short text");
+        ChatClientRequest request = TestUtils.createRequest("Short text");
         StepResult result = step.execute(request);
 
         assertThat(result).isInstanceOf(StepResult.Proceed.class);
@@ -71,7 +71,7 @@ class SchemaValidationStepTest {
         );
         SchemaValidationStep step = new SchemaValidationStep(properties);
 
-        AdvisedRequest request = TestUtils.createRequest("{not a valid json}");
+        ChatClientRequest request = TestUtils.createRequest("{not a valid json}");
         StepResult result = step.execute(request);
 
         assertThat(result).isInstanceOf(StepResult.Rejected.class);
@@ -93,7 +93,7 @@ class SchemaValidationStepTest {
         );
         SchemaValidationStep step = new SchemaValidationStep(properties);
 
-        AdvisedRequest request = TestUtils.createRequest("{\"action\": \"check_balance\"}");
+        ChatClientRequest request = TestUtils.createRequest("{\"action\": \"check_balance\"}");
         StepResult result = step.execute(request);
 
         assertThat(result).isInstanceOf(StepResult.Proceed.class);

@@ -1,6 +1,7 @@
 package io.github.contextenforcer.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.bind.ConstructorBinding;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 
 import java.util.Collections;
@@ -50,8 +51,20 @@ public record ContextEnforcerProperties(
      */
     public record SanitizationConfig(
             @DefaultValue("true") boolean stripControlChars,
-            @DefaultValue("true") boolean blockInjectionPatterns
-    ) {}
+            @DefaultValue("true") boolean blockInjectionPatterns,
+            List<String> customInjectionPatterns
+    ) {
+        @ConstructorBinding
+        public SanitizationConfig {
+            if (customInjectionPatterns == null) {
+                customInjectionPatterns = Collections.emptyList();
+            }
+        }
+
+        public SanitizationConfig(boolean stripControlChars, boolean blockInjectionPatterns) {
+            this(stripControlChars, blockInjectionPatterns, null);
+        }
+    }
 
     /**
      * Payload and schema validation constraints.
@@ -80,6 +93,10 @@ public record ContextEnforcerProperties(
         public IntentConfig {
             if (similarityThreshold <= 0.0) {
                 similarityThreshold = 0.78;
+            }
+            if (similarityThreshold > 1.0) {
+                throw new IllegalArgumentException(
+                        "context-enforcer.intent.similarity-threshold must be within (0, 1], got " + similarityThreshold);
             }
             if (allowedTopics == null) {
                 allowedTopics = Collections.emptyList();

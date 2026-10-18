@@ -2,11 +2,11 @@
 
 [![CI](https://github.com/marcosradix/context-enforcer/actions/workflows/ci.yml/badge.svg)](https://github.com/marcosradix/context-enforcer/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Spring Boot](https://img.shields.io/badge/Spring_Boot-3.4+-brightgreen.svg)](https://spring.io/projects/spring-boot)
-[![Spring AI](https://img.shields.io/badge/Spring_AI-1.0+-blue.svg)](https://spring.io/projects/spring-ai)
+[![Spring Boot](https://img.shields.io/badge/Spring_Boot-4.0+-brightgreen.svg)](https://spring.io/projects/spring-boot)
+[![Spring AI](https://img.shields.io/badge/Spring_AI-2.0+-blue.svg)](https://spring.io/projects/spring-ai)
 [![Java](https://img.shields.io/badge/Java-21%20%7C%2025-orange.svg)](https://openjdk.org/)
 
-**ContextEnforcer** is a modular, high-performance security, guardrails, and context-enforcement starter for **Spring AI** and **Spring Boot 3.4+**.
+**ContextEnforcer** is a modular, high-performance security, guardrails, and context-enforcement starter for **Spring AI 2.0+** and **Spring Boot 4.0+**.
 
 It leverages the **Chain of Responsibility** pattern to intercept chat requests *before* prompts reach language models or downstream vector stores. By enforcing structural validation, injection prevention, safe contextual enrichment, and semantic intent verification upfront, ContextEnforcer saves LLM tokens, reduces latency, and protects enterprise AI applications against adversarial inputs and hallucinations.
 
@@ -14,7 +14,7 @@ It leverages the **Chain of Responsibility** pattern to intercept chat requests 
 
 ## 🏛️ Architecture & Execution Flow
 
-ContextEnforcer acts as a transparent, high-precedence interceptor in the Spring AI pipeline by implementing both `CallAroundAdvisor` (synchronous calls) and `StreamAroundAdvisor` (reactive Flux streaming).
+ContextEnforcer acts as a transparent, high-precedence interceptor in the Spring AI pipeline by implementing both `CallAdvisor` (synchronous calls) and `StreamAdvisor` (reactive Flux streaming). In streaming mode the pipeline runs on subscription, on Reactor's `boundedElastic` scheduler, so blocking steps (e.g. embedding calls) never block an event loop.
 
 Configured with high order precedence (`Ordered.HIGHEST_PRECEDENCE + 100`), ContextEnforcer executes **before** memory advisors (`MessageChatMemoryAdvisor`) or RAG retrievers (`QuestionAnswerAdvisor`), ensuring malicious inputs are blocked before polluting memory or consuming vector search resources.
 
@@ -47,9 +47,9 @@ Configured with high order precedence (`Ordered.HIGHEST_PRECEDENCE + 100`), Cont
 
 | Step | Order | Responsibility | Violation Category |
 | :--- | :---: | :--- | :--- |
-| **`SanitizationStep`** | `10` | Strips invisible ASCII control characters and intercepts prompt injection / jailbreak patterns (`ignore previous instructions`, `DAN mode`, `system prompt`, etc.). | `PROMPT_INJECTION_DETECTED` / `SCHEMA_VALIDATION_FAILED` |
+| **`SanitizationStep`** | `10` | Strips invisible control and Unicode format characters (zero-width spaces, bidi overrides) and intercepts prompt injection / jailbreak patterns (`ignore previous instructions`, `DAN mode`, `system prompt`, etc.). Detection runs on an NFKC-normalized, whitespace-collapsed view, so obfuscated variants are caught too. Extra patterns can be added via `custom-injection-patterns`. | `PROMPT_INJECTION_DETECTED` / `SCHEMA_VALIDATION_FAILED` |
 | **`SchemaValidationStep`** | `20` | Enforces character payload boundaries to prevent Denial of Wallet (token exhaustion) and verifies schema format (e.g., JSON validation if required). | `SCHEMA_VALIDATION_FAILED` |
-| **`ContextEnrichmentStep`** | `30` | Securely enriches request metadata (tenantId, user roles, security scopes) into `systemParams` and `adviseContext` without concatenating or modifying `userText`. | `UNAUTHORIZED_CONTEXT` |
+| **`ContextEnrichmentStep`** | `30` | Securely adds request metadata (tenantId, user roles, security scopes) to the request `context()` and fills matching `{key}` placeholders left in system messages, without touching the user text. | — (never rejects; `UNAUTHORIZED_CONTEXT` is available for custom steps) |
 | **`IntentVerificationStep`** | `40` | Validates whether the user's intent strictly falls within permissible business domains using embeddings cosine similarity or keyword heuristics. | `OUT_OF_CONTEXT_INTENT` |
 
 ---
@@ -64,14 +64,14 @@ Add the ContextEnforcer starter to your `pom.xml`:
 <dependency>
     <groupId>io.github.contextenforcer</groupId>
     <artifactId>context-enforcer-spring-boot-starter</artifactId>
-    <version>1.0.0</version>
+    <version>2.0.0</version>
 </dependency>
 ```
 
 Or in `build.gradle`:
 
 ```groovy
-implementation 'io.github.contextenforcer:context-enforcer-spring-boot-starter:1.0.0'
+implementation 'io.github.contextenforcer:context-enforcer-spring-boot-starter:2.0.0'
 ```
 
 ### 2. Configure `application.yml`
@@ -86,13 +86,15 @@ context-enforcer:
   sanitization:
     strip-control-chars: true
     block-injection-patterns: true
+    custom-injection-patterns:          # Optional, case-insensitive Java regexes
+      - "reveal\\s+(the\\s+)?secrets"
   validation:
     max-length: 4000
     allowed-formats:
       - "TEXT"
       - "JSON"
   intent:
-    similarity-threshold: 0.78
+    similarity-threshold: 0.78        # Must be within (0, 1]
     allowed-topics:
       - "Financial operations, invoices, payments, and account balances"
       - "Technical support, bug reports, and account setup"
@@ -138,6 +140,8 @@ public class AiClientConfig {
 }
 ```
 
+> **System prompt placeholders:** Spring AI renders the system template before advisors run, but only when system params are supplied. Placeholders such as `{department}` above are therefore left intact and filled by `ContextEnrichmentStep` from the `ContextMetadataProvider`. If you also pass your own params with `.system(s -> s.param(...))`, provide every placeholder there, since the template is then rendered (and validated) by Spring AI itself.
+
 ---
 
 ## ⚙️ Violation Handling Strategies
@@ -162,7 +166,7 @@ ContextEnforcer supports two configurable handling modes when a guardrail fails:
    ```
 
 2. **`RETURN_FALLBACK_MESSAGE`**:
-   Short-circuits without calling the LLM and returns a synthetic `AdvisedResponse` containing the configured `fallback-message`. This preserves normal conversational flow in chatbots without raising exceptions.
+   Short-circuits without calling the LLM and returns a synthetic `ChatClientResponse` containing the configured `fallback-message`. This preserves normal conversational flow in chatbots without raising exceptions.
 
 ---
 
@@ -189,9 +193,9 @@ public class PiiMaskingStep implements EnforcementStep {
     }
 
     @Override
-    public StepResult execute(AdvisedRequest request) {
-        String masked = maskCreditCards(request.userText());
-        AdvisedRequest updated = AdvisedRequest.from(request).userText(masked).build();
+    public StepResult execute(ChatClientRequest request) {
+        String masked = maskCreditCards(EnforcementStep.userText(request));
+        ChatClientRequest updated = EnforcementStep.withUserText(request, masked);
         return new StepResult.Proceed(updated);
     }
 
@@ -200,6 +204,10 @@ public class PiiMaskingStep implements EnforcementStep {
     }
 }
 ```
+
+### Semantic Intent Verification
+
+When a single `EmbeddingModel` bean is available (e.g. from a Spring AI provider starter) and `intent.allowed-topics` is set, `EmbeddingIntentVerifierStrategy` is used automatically; otherwise all prompts pass the intent step. The strategy **fails secure**: if topic embeddings cannot be computed (they are retried on each request) or the prompt cannot be embedded, the prompt is rejected.
 
 ### Implementing Custom Intent Strategies
 
@@ -223,7 +231,7 @@ ContextEnforcer integrates directly with **Micrometer** and Spring Boot Actuator
 
 | Metric | Type | Tags | Description |
 | :--- | :---: | :--- | :--- |
-| `spring.ai.context.enforcer.latency` | Timer | `outcome` (`ALLOWED` \| `REJECTED`), `step` | Execution duration in nanoseconds for the enforcement pipeline. |
+| `spring.ai.context.enforcer.latency` | Timer | `outcome` (`ALLOWED` \| `REJECTED`), `step` (`none` when allowed) | Execution duration in nanoseconds for the enforcement pipeline. |
 | `spring.ai.context.enforcer.rejected.total` | Counter | `step`, `violation_type` | Total number of blocked prompts partitioned by step and violation reason. |
 
 Example Prometheus query:
@@ -235,7 +243,7 @@ rate(spring_ai_context_enforcer_rejected_total[5m])
 
 ## 🛠️ Build & Test
 
-ContextEnforcer requires **Java 21+** (fully verified with **Java 25**) and **Maven 3.9+**.
+ContextEnforcer requires **Java 21+** (verified with **Java 21** and **25**), **Spring Boot 4.0+**, **Spring AI 2.0+** and **Maven 3.9+**.
 
 ```bash
 # Run unit and integration tests

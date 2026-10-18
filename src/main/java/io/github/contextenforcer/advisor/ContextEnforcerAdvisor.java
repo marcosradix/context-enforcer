@@ -5,17 +5,19 @@ import io.github.contextenforcer.core.EnforcementStep;
 import io.github.contextenforcer.core.StepResult;
 import io.github.contextenforcer.exception.ContextViolationException;
 import io.github.contextenforcer.observability.ContextEnforcerMetrics;
-import org.springframework.ai.chat.client.advisor.api.AdvisedRequest;
-import org.springframework.ai.chat.client.advisor.api.AdvisedResponse;
-import org.springframework.ai.chat.client.advisor.api.CallAroundAdvisor;
-import org.springframework.ai.chat.client.advisor.api.CallAroundAdvisorChain;
-import org.springframework.ai.chat.client.advisor.api.StreamAroundAdvisor;
-import org.springframework.ai.chat.client.advisor.api.StreamAroundAdvisorChain;
+import org.springframework.ai.chat.client.ChatClientRequest;
+import org.springframework.ai.chat.client.ChatClientResponse;
+import org.springframework.ai.chat.client.advisor.api.CallAdvisor;
+import org.springframework.ai.chat.client.advisor.api.CallAdvisorChain;
+import org.springframework.ai.chat.client.advisor.api.StreamAdvisor;
+import org.springframework.ai.chat.client.advisor.api.StreamAdvisorChain;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.core.Ordered;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.util.Collections;
 import java.util.Comparator;
@@ -24,10 +26,10 @@ import java.util.Map;
 
 /**
  * Primary Spring AI Advisor enforcing context, guardrails, and security.
- * Implements both {@link CallAroundAdvisor} (synchronous) and {@link StreamAroundAdvisor} (reactive streaming).
+ * Implements both {@link CallAdvisor} (synchronous) and {@link StreamAdvisor} (reactive streaming).
  * Configured with high precedence (ORDER = HIGHEST_PRECEDENCE + 100) to execute before memory or RAG advisors.
  */
-public class ContextEnforcerAdvisor implements CallAroundAdvisor, StreamAroundAdvisor {
+public class ContextEnforcerAdvisor implements CallAdvisor, StreamAdvisor {
 
     public static final String ADVISOR_NAME = "ContextEnforcerAdvisor";
     public static final int DEFAULT_ORDER = Ordered.HIGHEST_PRECEDENCE + 100;
@@ -59,34 +61,36 @@ public class ContextEnforcerAdvisor implements CallAroundAdvisor, StreamAroundAd
     }
 
     @Override
-    public AdvisedResponse aroundCall(AdvisedRequest advisedRequest, CallAroundAdvisorChain chain) {
+    public ChatClientResponse adviseCall(ChatClientRequest request, CallAdvisorChain chain) {
         if (!properties.enabled()) {
-            return chain.nextAroundCall(advisedRequest);
+            return chain.nextCall(request);
         }
 
-        return switch (executePipeline(advisedRequest)) {
-            case StepResult.Proceed(var updatedRequest) -> chain.nextAroundCall(updatedRequest);
-            case StepResult.Rejected rejected -> handleViolationSync(rejected, advisedRequest.adviseContext());
+        return switch (executePipeline(request)) {
+            case StepResult.Proceed(var updatedRequest) -> chain.nextCall(updatedRequest);
+            case StepResult.Rejected rejected -> handleViolation(rejected, request.context());
         };
     }
 
     @Override
-    public Flux<AdvisedResponse> aroundStream(AdvisedRequest advisedRequest, StreamAroundAdvisorChain chain) {
+    public Flux<ChatClientResponse> adviseStream(ChatClientRequest request, StreamAdvisorChain chain) {
         if (!properties.enabled()) {
-            return chain.nextAroundStream(advisedRequest);
+            return chain.nextStream(request);
         }
 
-        return switch (executePipeline(advisedRequest)) {
-            case StepResult.Proceed(var updatedRequest) -> chain.nextAroundStream(updatedRequest);
-            case StepResult.Rejected rejected -> Flux.defer(() ->
-                    Flux.just(handleViolationSync(rejected, advisedRequest.adviseContext()))
-            );
-        };
+        // Steps may block (e.g. embedding calls), so run the pipeline on subscription and off the caller's thread
+        return Mono.just(request)
+                .publishOn(Schedulers.boundedElastic())
+                .map(this::executePipeline)
+                .flatMapMany(result -> switch (result) {
+                    case StepResult.Proceed(var updatedRequest) -> chain.nextStream(updatedRequest);
+                    case StepResult.Rejected rejected -> Flux.just(handleViolation(rejected, request.context()));
+                });
     }
 
-    private StepResult executePipeline(AdvisedRequest initialRequest) {
+    private StepResult executePipeline(ChatClientRequest initialRequest) {
         long startTime = System.nanoTime();
-        AdvisedRequest currentRequest = initialRequest;
+        ChatClientRequest currentRequest = initialRequest;
 
         for (EnforcementStep step : steps) {
             StepResult result = step.execute(currentRequest);
@@ -107,7 +111,7 @@ public class ContextEnforcerAdvisor implements CallAroundAdvisor, StreamAroundAd
         return new StepResult.Proceed(currentRequest);
     }
 
-    private AdvisedResponse handleViolationSync(StepResult.Rejected rejected, Map<String, Object> adviseContext) {
+    private ChatClientResponse handleViolation(StepResult.Rejected rejected, Map<String, Object> context) {
         if (properties.onViolation() == ContextEnforcerProperties.ViolationStrategy.THROW_EXCEPTION) {
             throw new ContextViolationException(rejected);
         }
@@ -116,8 +120,10 @@ public class ContextEnforcerAdvisor implements CallAroundAdvisor, StreamAroundAd
                 new Generation(new AssistantMessage(properties.fallbackMessage()))
         ));
 
-        Map<String, Object> context = adviseContext != null ? adviseContext : Collections.emptyMap();
-        return new AdvisedResponse(fallbackChatResponse, context);
+        return ChatClientResponse.builder()
+                .chatResponse(fallbackChatResponse)
+                .context(context != null ? context : Collections.emptyMap())
+                .build();
     }
 
     public List<EnforcementStep> getSteps() {

@@ -13,10 +13,11 @@ import io.github.contextenforcer.steps.SchemaValidationStep;
 import io.github.contextenforcer.strategy.EmbeddingIntentVerifierStrategy;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.embedding.EmbeddingModel;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -36,10 +37,12 @@ import java.util.List;
 @ConditionalOnProperty(prefix = "context-enforcer", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class ContextEnforcerAutoConfiguration {
 
+    private static final Logger log = LoggerFactory.getLogger(ContextEnforcerAutoConfiguration.class);
+
     @Bean
     @ConditionalOnMissingBean
-    public ContextEnforcerMetrics contextEnforcerMetrics(@Autowired(required = false) MeterRegistry meterRegistry) {
-        return new ContextEnforcerMetrics(meterRegistry != null ? meterRegistry : new SimpleMeterRegistry());
+    public ContextEnforcerMetrics contextEnforcerMetrics(ObjectProvider<MeterRegistry> meterRegistry) {
+        return new ContextEnforcerMetrics(meterRegistry.getIfAvailable(SimpleMeterRegistry::new));
     }
 
     @Bean
@@ -66,20 +69,26 @@ public class ContextEnforcerAutoConfiguration {
         return new ContextEnrichmentStep(metadataProvider);
     }
 
+    /**
+     * Uses semantic verification when a unique {@link EmbeddingModel} is available, otherwise allows all prompts.
+     * The model is resolved through {@link ObjectProvider} at bean creation time (instead of {@code @ConditionalOnBean})
+     * so the result does not depend on the order in which Spring AI provider auto-configurations are processed.
+     */
     @Bean
     @ConditionalOnMissingBean(IntentVerifierStrategy.class)
-    @ConditionalOnBean(EmbeddingModel.class)
-    public IntentVerifierStrategy embeddingIntentVerifierStrategy(
-            EmbeddingModel embeddingModel,
+    public IntentVerifierStrategy intentVerifierStrategy(
+            ObjectProvider<EmbeddingModel> embeddingModel,
             ContextEnforcerProperties properties
     ) {
-        return new EmbeddingIntentVerifierStrategy(embeddingModel, properties);
-    }
-
-    @Bean
-    @ConditionalOnMissingBean(IntentVerifierStrategy.class)
-    public IntentVerifierStrategy fallbackNoOpIntentVerifierStrategy() {
-        return (userPrompt, metadata) -> true;
+        EmbeddingModel model = embeddingModel.getIfUnique();
+        if (model == null) {
+            if (!properties.intent().allowedTopics().isEmpty()) {
+                log.warn("ContextEnforcer: allowed-topics are configured but no unique EmbeddingModel bean is available; "
+                        + "semantic intent verification is disabled.");
+            }
+            return (userPrompt, metadata) -> true;
+        }
+        return new EmbeddingIntentVerifierStrategy(model, properties);
     }
 
     @Bean

@@ -4,7 +4,7 @@ import io.github.contextenforcer.core.StepResult;
 import io.github.contextenforcer.test.TestUtils;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.ai.chat.client.advisor.api.AdvisedRequest;
+import org.springframework.ai.chat.client.ChatClientRequest;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -14,7 +14,7 @@ class IntentVerificationStepTest {
     @DisplayName("Should proceed when strategy allows the prompt")
     void shouldProceedWhenAllowed() {
         IntentVerificationStep step = new IntentVerificationStep((prompt, metadata) -> true);
-        AdvisedRequest request = TestUtils.createRequest("Transfer funds");
+        ChatClientRequest request = TestUtils.createRequest("Transfer funds");
 
         StepResult result = step.execute(request);
 
@@ -25,7 +25,7 @@ class IntentVerificationStepTest {
     @DisplayName("Should reject with OUT_OF_CONTEXT_INTENT when strategy denies the prompt")
     void shouldRejectWhenDenied() {
         IntentVerificationStep step = new IntentVerificationStep((prompt, metadata) -> false);
-        AdvisedRequest request = TestUtils.createRequest("What is the recipe for chocolate cake?");
+        ChatClientRequest request = TestUtils.createRequest("What is the recipe for chocolate cake?");
 
         StepResult result = step.execute(request);
 

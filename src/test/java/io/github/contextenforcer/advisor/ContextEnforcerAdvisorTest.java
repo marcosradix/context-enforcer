@@ -10,10 +10,10 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.ai.chat.client.advisor.api.AdvisedRequest;
-import org.springframework.ai.chat.client.advisor.api.AdvisedResponse;
-import org.springframework.ai.chat.client.advisor.api.CallAroundAdvisorChain;
-import org.springframework.ai.chat.client.advisor.api.StreamAroundAdvisorChain;
+import org.springframework.ai.chat.client.ChatClientRequest;
+import org.springframework.ai.chat.client.ChatClientResponse;
+import org.springframework.ai.chat.client.advisor.api.CallAdvisorChain;
+import org.springframework.ai.chat.client.advisor.api.StreamAdvisorChain;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
@@ -61,15 +61,15 @@ class ContextEnforcerAdvisorTest {
         }
 
         @Override
-        public StepResult execute(AdvisedRequest request) {
+        public StepResult execute(ChatClientRequest request) {
             this.executed = true;
             return resultToReturn != null ? resultToReturn : new StepResult.Proceed(request);
         }
     }
 
     @Test
-    @DisplayName("aroundCall should pass request down the chain when all steps proceed")
-    void aroundCallShouldProceedWhenStepsPass() {
+    @DisplayName("adviseCall should pass request down the chain when all steps proceed")
+    void adviseCallShouldProceedWhenStepsPass() {
         StubStep step1 = new StubStep(10, "Step1", null);
 
         ContextEnforcerProperties props = new ContextEnforcerProperties(
@@ -83,19 +83,19 @@ class ContextEnforcerAdvisorTest {
 
         ContextEnforcerAdvisor advisor = new ContextEnforcerAdvisor(List.of(step1), props, metrics);
 
-        AdvisedRequest request = TestUtils.createRequest("Hello");
-        AdvisedResponse expectedResponse = new AdvisedResponse(
+        ChatClientRequest request = TestUtils.createRequest("Hello");
+        ChatClientResponse expectedResponse = new ChatClientResponse(
                 new ChatResponse(List.of(new Generation(new AssistantMessage("Hi there!")))),
                 Map.of()
         );
 
         AtomicBoolean chainCalled = new AtomicBoolean(false);
-        CallAroundAdvisorChain chain = req -> {
+        CallAdvisorChain chain = TestUtils.callChain(req -> {
             chainCalled.set(true);
             return expectedResponse;
-        };
+        });
 
-        AdvisedResponse response = advisor.aroundCall(request, chain);
+        ChatClientResponse response = advisor.adviseCall(request, chain);
 
         assertThat(response).isSameAs(expectedResponse);
         assertThat(chainCalled.get()).isTrue();
@@ -104,8 +104,8 @@ class ContextEnforcerAdvisorTest {
     }
 
     @Test
-    @DisplayName("aroundCall should throw ContextViolationException when violation strategy is THROW_EXCEPTION")
-    void aroundCallShouldThrowExceptionOnViolation() {
+    @DisplayName("adviseCall should throw ContextViolationException when violation strategy is THROW_EXCEPTION")
+    void adviseCallShouldThrowExceptionOnViolation() {
         StubStep step1 = new StubStep(
                 10,
                 "MockStep",
@@ -122,15 +122,15 @@ class ContextEnforcerAdvisorTest {
         );
 
         ContextEnforcerAdvisor advisor = new ContextEnforcerAdvisor(List.of(step1), props, metrics);
-        AdvisedRequest request = TestUtils.createRequest("Bad prompt");
+        ChatClientRequest request = TestUtils.createRequest("Bad prompt");
 
         AtomicBoolean chainCalled = new AtomicBoolean(false);
-        CallAroundAdvisorChain chain = req -> {
+        CallAdvisorChain chain = TestUtils.callChain(req -> {
             chainCalled.set(true);
             return null;
-        };
+        });
 
-        assertThatThrownBy(() -> advisor.aroundCall(request, chain))
+        assertThatThrownBy(() -> advisor.adviseCall(request, chain))
                 .isInstanceOf(ContextViolationException.class)
                 .hasMessageContaining("[MockStep - PROMPT_INJECTION_DETECTED]: Jailbreak detected");
 
@@ -139,8 +139,8 @@ class ContextEnforcerAdvisorTest {
     }
 
     @Test
-    @DisplayName("aroundCall should return fallback AdvisedResponse when violation strategy is RETURN_FALLBACK_MESSAGE")
-    void aroundCallShouldReturnFallbackOnViolation() {
+    @DisplayName("adviseCall should return fallback ChatClientResponse when violation strategy is RETURN_FALLBACK_MESSAGE")
+    void adviseCallShouldReturnFallbackOnViolation() {
         StubStep step1 = new StubStep(
                 10,
                 "MockStep",
@@ -158,26 +158,26 @@ class ContextEnforcerAdvisorTest {
         );
 
         ContextEnforcerAdvisor advisor = new ContextEnforcerAdvisor(List.of(step1), props, metrics);
-        AdvisedRequest request = TestUtils.createRequest("Irrelevant question", Map.of(), Map.of("session", "abc"));
+        ChatClientRequest request = TestUtils.createRequest("Irrelevant question", Map.of("session", "abc"));
 
         AtomicBoolean chainCalled = new AtomicBoolean(false);
-        CallAroundAdvisorChain chain = req -> {
+        CallAdvisorChain chain = TestUtils.callChain(req -> {
             chainCalled.set(true);
             return null;
-        };
+        });
 
-        AdvisedResponse response = advisor.aroundCall(request, chain);
+        ChatClientResponse response = advisor.adviseCall(request, chain);
 
         assertThat(response).isNotNull();
-        assertThat(response.response().getResult().getOutput().getText()).isEqualTo(fallback);
-        assertThat(response.adviseContext()).containsEntry("session", "abc");
+        assertThat(response.chatResponse().getResult().getOutput().getText()).isEqualTo(fallback);
+        assertThat(response.context()).containsEntry("session", "abc");
         assertThat(chainCalled.get()).isFalse();
         assertThat(meterRegistry.find("spring.ai.context.enforcer.rejected.total").counter().count()).isEqualTo(1.0);
     }
 
     @Test
-    @DisplayName("aroundStream should emit fallback response reactively on violation")
-    void aroundStreamShouldEmitFallbackOnViolation() {
+    @DisplayName("adviseStream should emit fallback response reactively on violation")
+    void adviseStreamShouldEmitFallbackOnViolation() {
         StubStep step1 = new StubStep(
                 10,
                 "StreamStep",
@@ -195,25 +195,60 @@ class ContextEnforcerAdvisorTest {
         );
 
         ContextEnforcerAdvisor advisor = new ContextEnforcerAdvisor(List.of(step1), props, metrics);
-        AdvisedRequest request = TestUtils.createRequest("Large prompt");
+        ChatClientRequest request = TestUtils.createRequest("Large prompt");
 
         AtomicBoolean chainCalled = new AtomicBoolean(false);
-        StreamAroundAdvisorChain chain = req -> {
+        StreamAdvisorChain chain = TestUtils.streamChain(req -> {
             chainCalled.set(true);
             return Flux.empty();
-        };
+        });
 
-        Flux<AdvisedResponse> stream = advisor.aroundStream(request, chain);
+        Flux<ChatClientResponse> stream = advisor.adviseStream(request, chain);
 
         StepVerifier.create(stream)
-                .assertNext(res -> assertThat(res.response().getResult().getOutput().getText()).isEqualTo(fallback))
+                .assertNext(res -> assertThat(res.chatResponse().getResult().getOutput().getText()).isEqualTo(fallback))
                 .verifyComplete();
 
         assertThat(chainCalled.get()).isFalse();
     }
 
     @Test
-    @DisplayName("aroundCall should bypass pipeline when enabled is false")
+    @DisplayName("adviseStream should run the pipeline lazily and signal violations as stream errors")
+    void adviseStreamShouldBeLazyAndEmitErrorOnViolation() {
+        AtomicBoolean stepExecuted = new AtomicBoolean(false);
+        EnforcementStep rejectingStep = new StubStep(
+                10,
+                "StreamStep",
+                new StepResult.Rejected("StreamStep", StepResult.ViolationType.PROMPT_INJECTION_DETECTED, "Injection")
+        ) {
+            @Override
+            public StepResult execute(ChatClientRequest request) {
+                stepExecuted.set(true);
+                return super.execute(request);
+            }
+        };
+
+        ContextEnforcerProperties props = new ContextEnforcerProperties(
+                true,
+                ContextEnforcerProperties.ViolationStrategy.THROW_EXCEPTION,
+                "Fallback",
+                null,
+                null,
+                null
+        );
+        ContextEnforcerAdvisor advisor = new ContextEnforcerAdvisor(List.of(rejectingStep), props, metrics);
+
+        Flux<ChatClientResponse> stream = advisor.adviseStream(TestUtils.createRequest("Prompt"), TestUtils.streamChain(req -> Flux.empty()));
+        assertThat(stepExecuted.get()).isFalse();
+
+        StepVerifier.create(stream)
+                .expectError(ContextViolationException.class)
+                .verify();
+        assertThat(stepExecuted.get()).isTrue();
+    }
+
+    @Test
+    @DisplayName("adviseCall should bypass pipeline when enabled is false")
     void shouldBypassWhenDisabled() {
         ContextEnforcerProperties props = new ContextEnforcerProperties(
                 false,
@@ -227,14 +262,14 @@ class ContextEnforcerAdvisorTest {
         StubStep step = new StubStep(10, "Step", null);
         ContextEnforcerAdvisor advisor = new ContextEnforcerAdvisor(List.of(step), props, metrics);
 
-        AdvisedRequest request = TestUtils.createRequest("Test");
+        ChatClientRequest request = TestUtils.createRequest("Test");
         AtomicBoolean chainCalled = new AtomicBoolean(false);
-        CallAroundAdvisorChain chain = req -> {
+        CallAdvisorChain chain = TestUtils.callChain(req -> {
             chainCalled.set(true);
             return null;
-        };
+        });
 
-        advisor.aroundCall(request, chain);
+        advisor.adviseCall(request, chain);
 
         assertThat(step.executed).isFalse();
         assertThat(chainCalled.get()).isTrue();

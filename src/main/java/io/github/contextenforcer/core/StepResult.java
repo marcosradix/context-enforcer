@@ -1,6 +1,6 @@
 package io.github.contextenforcer.core;
 
-import org.springframework.ai.chat.client.advisor.api.AdvisedRequest;
+import org.springframework.ai.chat.client.ChatClientRequest;
 
 /**
  * Result of an enforcement step in the ContextEnforcer pipeline.
@@ -11,9 +11,9 @@ public sealed interface StepResult permits StepResult.Proceed, StepResult.Reject
     /**
      * Indicates that the request passed validation and provides the (potentially enriched or sanitized) request.
      *
-     * @param request the current AdvisedRequest to pass to the next step
+     * @param request the current ChatClientRequest to pass to the next step
      */
-    record Proceed(AdvisedRequest request) implements StepResult {}
+    record Proceed(ChatClientRequest request) implements StepResult {}
 
     /**
      * Indicates that the request was rejected by an enforcement step.

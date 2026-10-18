@@ -1,10 +1,11 @@
 package io.github.contextenforcer.steps;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.contextenforcer.config.ContextEnforcerProperties;
 import io.github.contextenforcer.core.EnforcementStep;
 import io.github.contextenforcer.core.StepResult;
-import org.springframework.ai.chat.client.advisor.api.AdvisedRequest;
+import org.springframework.ai.chat.client.ChatClientRequest;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.util.List;
 
@@ -21,7 +22,7 @@ public class SchemaValidationStep implements EnforcementStep {
     private final ObjectMapper objectMapper;
 
     public SchemaValidationStep(ContextEnforcerProperties properties) {
-        this(properties, new ObjectMapper());
+        this(properties, JsonMapper.builder().build());
     }
 
     public SchemaValidationStep(ContextEnforcerProperties properties, ObjectMapper objectMapper) {
@@ -40,11 +41,11 @@ public class SchemaValidationStep implements EnforcementStep {
     }
 
     @Override
-    public StepResult execute(AdvisedRequest request) {
-        String text = request.userText();
+    public StepResult execute(ChatClientRequest request) {
+        String text = EnforcementStep.userText(request);
         int maxLength = properties.validation().maxLength();
 
-        if (text != null && text.length() > maxLength) {
+        if (text.length() > maxLength) {
             return new StepResult.Rejected(
                     getName(),
                     StepResult.ViolationType.SCHEMA_VALIDATION_FAILED,
@@ -54,8 +55,8 @@ public class SchemaValidationStep implements EnforcementStep {
 
         List<String> allowedFormats = properties.validation().allowedFormats();
         if (allowedFormats != null && !allowedFormats.isEmpty()) {
-            boolean onlyJson = allowedFormats.size() == 1 && allowedFormats.contains("JSON");
-            if (onlyJson && text != null) {
+            boolean onlyJson = allowedFormats.stream().allMatch("JSON"::equalsIgnoreCase);
+            if (onlyJson) {
                 try {
                     objectMapper.readTree(text);
                 } catch (Exception e) {

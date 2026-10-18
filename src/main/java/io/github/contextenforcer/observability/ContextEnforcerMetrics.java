@@ -14,6 +14,8 @@ import java.util.concurrent.TimeUnit;
 public class ContextEnforcerMetrics {
 
     private static final String METRIC_PREFIX = "spring.ai.context.enforcer";
+    /** Value of the {@code step} tag for allowed requests; keeps tag keys identical across outcomes (required by Prometheus). */
+    public static final String NO_STEP = "none";
     private final MeterRegistry registry;
 
     public ContextEnforcerMetrics(MeterRegistry registry) {
@@ -28,6 +30,7 @@ public class ContextEnforcerMetrics {
     public void recordAllowed(long durationNanos) {
         Timer.builder(METRIC_PREFIX + ".latency")
                 .tag("outcome", "ALLOWED")
+                .tag("step", NO_STEP)
                 .description("Execution latency of the ContextEnforcer pipeline")
                 .register(registry)
                 .record(durationNanos, TimeUnit.NANOSECONDS);
@@ -50,7 +53,7 @@ public class ContextEnforcerMetrics {
         Timer.builder(METRIC_PREFIX + ".latency")
                 .tag("outcome", "REJECTED")
                 .tag("step", rejected.stepName())
-                .description("Execution latency of the ContextEnforcer pipeline for rejected requests")
+                .description("Execution latency of the ContextEnforcer pipeline")
                 .register(registry)
                 .record(durationNanos, TimeUnit.NANOSECONDS);
     }

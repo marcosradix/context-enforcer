@@ -1,10 +1,13 @@
 package io.github.contextenforcer.observability;
 
 import io.github.contextenforcer.core.StepResult;
+import io.micrometer.core.instrument.Tag;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -58,5 +61,21 @@ class ContextEnforcerMetricsTest {
 
         assertThat(timer).isNotNull();
         assertThat(timer.count()).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("Latency timers should share the same tag keys for all outcomes")
+    void latencyTimersShouldShareTagKeys() {
+        metrics.recordAllowed(1_000L);
+        metrics.recordRejection(new StepResult.Rejected(
+                "SanitizationStep", StepResult.ViolationType.PROMPT_INJECTION_DETECTED, "x"), 1_000L);
+
+        var tagKeySets = meterRegistry.find("spring.ai.context.enforcer.latency").timers().stream()
+                .map(t -> t.getId().getTags().stream().map(Tag::getKey).collect(Collectors.toSet()))
+                .distinct()
+                .toList();
+
+        assertThat(tagKeySets).hasSize(1);
+        assertThat(tagKeySets.get(0)).containsExactlyInAnyOrder("outcome", "step");
     }
 }

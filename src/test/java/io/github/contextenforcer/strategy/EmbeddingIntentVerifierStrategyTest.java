@@ -96,4 +96,45 @@ class EmbeddingIntentVerifierStrategyTest {
         boolean allowed = strategy.isWithinAllowedContext("How to play tennis", Map.of());
         assertThat(allowed).isFalse();
     }
+
+    @Test
+    @DisplayName("Should fail secure when topics are configured but none could be embedded")
+    void shouldRejectWhenTopicEmbeddingFailed() {
+        EmbeddingModel mockModel = mock(EmbeddingModel.class);
+        String topic = "Financial operations and invoices";
+        when(mockModel.embed(topic)).thenThrow(new IllegalStateException("provider down"));
+
+        EmbeddingIntentVerifierStrategy strategy = new EmbeddingIntentVerifierStrategy(mockModel, propertiesWith(topic));
+        strategy.afterPropertiesSet();
+
+        assertThat(strategy.isWithinAllowedContext("Pay bill", Map.of())).isFalse();
+    }
+
+    @Test
+    @DisplayName("Should lazily retry embedding topics that failed during startup")
+    void shouldRetryFailedTopicEmbedding() {
+        EmbeddingModel mockModel = mock(EmbeddingModel.class);
+        String topic = "Financial operations and invoices";
+        when(mockModel.embed(topic))
+                .thenThrow(new IllegalStateException("provider down"))
+                .thenReturn(new float[]{1.0f, 0.0f, 0.0f});
+        when(mockModel.embed("Pay bill")).thenReturn(new float[]{0.8f, 0.6f, 0.0f});
+
+        EmbeddingIntentVerifierStrategy strategy = new EmbeddingIntentVerifierStrategy(mockModel, propertiesWith(topic));
+        strategy.afterPropertiesSet();
+
+        assertThat(strategy.isWithinAllowedContext("Pay bill", Map.of())).isTrue();
+        assertThat(strategy.getTopicEmbeddingsCache()).containsKey(topic);
+    }
+
+    private static ContextEnforcerProperties propertiesWith(String... topics) {
+        return new ContextEnforcerProperties(
+                true,
+                ContextEnforcerProperties.ViolationStrategy.THROW_EXCEPTION,
+                "Fallback",
+                null,
+                null,
+                new IntentConfig(0.75, List.of(topics))
+        );
+    }
 }
